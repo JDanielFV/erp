@@ -1,10 +1,26 @@
-
-self.addEventListener('install', (e) => {
-    console.log('Service Worker: Installed');
+self.addEventListener('push', function (event) {
+    if (event.data) {
+        const data = event.data.json();
+        const options = {
+            body: data.body,
+            icon: data.icon || '/logo-a&g.svg',
+            badge: '/logo-a&g.svg',
+            vibrate: [100, 50, 100],
+            data: {
+                dateOfArrival: Date.now(),
+                primaryKey: '2'
+            }
+        };
+        event.waitUntil(
+            self.registration.showNotification(data.title, options)
+        );
+    }
 });
 
-self.addEventListener('fetch', (e) => {
-    // Simple pass-through fetch
-    // In a real PWA you would cache assets here
-    // e.respondWith(fetch(e.request));
+self.addEventListener('notificationclick', function (event) {
+    console.log('Notification click received.');
+    event.notification.close();
+    event.waitUntil(
+        clients.openWindow('https://erp-ten-weld.vercel.app/dashboard') // Modify if testing locally or prod URL logic needed
+    );
 });

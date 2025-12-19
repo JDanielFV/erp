@@ -5,7 +5,9 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import styled, { keyframes } from 'styled-components';
 import { supabase } from '@/lib/supabase';
+import { notificationService, Notification as NotificationType } from '../utils/notificationService'; // Add import
 import { sessionService } from '../utils/sessionService';
+import { pushService } from '../utils/pushService'; // Correct location
 
 // --- STYLES FOR MAIN DASHBOARD (Kept from approved step) ---
 const PageContainer = styled.div`
@@ -264,6 +266,8 @@ export default function DashboardPage() {
   const [isClosing, setIsClosing] = useState(false);
 
   const [orders, setOrders] = useState<any[]>([]);
+  const [notifications, setNotifications] = useState<NotificationType[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   // Check for session expiry on mount
   useEffect(() => {
@@ -319,6 +323,15 @@ export default function DashboardPage() {
     };
     fetchOrders();
 
+    // Fetch Notifications
+    const fetchNotifications = async () => {
+      if (!storedUuid) return;
+      const notes = await notificationService.getNotifications(storedUuid);
+      setNotifications(notes);
+      setUnreadCount(notes.filter(n => !n.is_read).length);
+    };
+    if (storedUuid) fetchNotifications();
+
     // Subscribe for changes (keep dashboard updated)
     const channel = supabase.channel('dashboard_updates')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
@@ -326,9 +339,61 @@ export default function DashboardPage() {
       })
       .subscribe();
 
+
+
+    // Check for session expiry and permission on mount (logic merged here)
+    if ('Notification' in window) {
+      if (Notification.permission !== 'granted' && Notification.permission !== 'denied') {
+        Notification.requestPermission();
+      }
+    }
+
+    // PWA Push Registration
+    if (storedUuid) {
+      pushService.registerSubscription(storedUuid);
+    }
+
+    // Check session expiry logic (previously in nested useEffect)
+    const arrivalTime = localStorage.getItem('arrivalTimestamp');
+    if (arrivalTime) {
+      const loginTime = new Date(arrivalTime).getTime();
+      const now = new Date().getTime();
+      const hoursDiff = (now - loginTime) / (1000 * 60 * 60);
+
+      if (hoursDiff >= 8) {
+        console.log('Session expired on dashboard, logging out...');
+        localStorage.clear();
+        router.push('/');
+      }
+    }
+
+    // Subscribe to notifications
+    const notificationChannel = supabase.channel('dashboard_notifications')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, (payload) => {
+        const newNote = payload.new as NotificationType;
+        // Check if it belongs to user or is broadcast
+        if ((storedUuid && newNote.user_id === storedUuid) || newNote.user_id === null) {
+          // Add to list and increment count
+          setNotifications(prev => [newNote, ...prev]);
+          setUnreadCount(prev => prev + 1);
+
+          // SYSTEM NOTIFICATION (Browser Push)
+          if ('Notification' in window && Notification.permission === 'granted') {
+            try {
+              new Notification(newNote.title, {
+                body: newNote.message,
+                icon: '/logo-a&g.svg' // Optional: path to logo
+              });
+            } catch (e) { console.error('Notification error:', e); }
+          }
+        }
+      })
+      .subscribe();
+
     return () => {
       clearInterval(timer);
       supabase.removeChannel(channel);
+      supabase.removeChannel(notificationChannel);
     };
   }, []);
 
@@ -382,6 +447,41 @@ export default function DashboardPage() {
   return (
     <PageContainer>
       <Header>
+        <div
+          style={{ position: 'absolute', top: '1rem', right: '1rem', cursor: 'pointer' }}
+          onClick={() => {
+            if (notifications.length === 0) return alert('No tienes notificaciones.');
+            const message = notifications.map(n =>
+              `[${new Date(n.created_at).toLocaleTimeString()}] ${n.title}: ${n.message}`
+            ).join('\n\n');
+            alert('Tus Notificaciones:\n\n' + message);
+
+            // Clear badge locally for now (proper read receipt would be separate call)
+            setUnreadCount(0);
+            if (userId) notificationService.markAllAsRead(userId);
+          }}
+        >
+          <span style={{ fontSize: '1.5rem' }}>🔔</span>
+          {unreadCount > 0 && (
+            <span style={{
+              position: 'absolute',
+              top: -5,
+              right: -5,
+              backgroundColor: 'red',
+              color: 'white',
+              borderRadius: '50%',
+              width: '20px',
+              height: '20px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '0.8rem',
+              fontWeight: 'bold'
+            }}>
+              {unreadCount}
+            </span>
+          )}
+        </div>
         <Greeting>Hola {userName.split(' ')[0]},</Greeting>
         <DateDisplay>{currentDate} <br /> {currentTime}</DateDisplay>
       </Header>

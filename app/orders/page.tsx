@@ -1,9 +1,10 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import styled from 'styled-components';
+import styled, { keyframes } from 'styled-components';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
+import { notificationService } from '../utils/notificationService'; // Fixed import location
 
 // --- STYLES ---
 const PageContainer = styled.div`
@@ -383,10 +384,22 @@ export default function OrdersPage() {
             });
             if (error) throw error;
 
+            // NOTIFICATION TRIGGER
+            const order = orders.find(o => o.id === orderId);
+            const clientName = order?.clients?.name || 'Un pedido';
+            await notificationService.createNotification({
+                userId: data.user_id,
+                title: 'Nueva Tarea Asignada',
+                message: `Se te ha asignado una tarea en el pedido de ${clientName}: "${data.task_description}"`,
+                type: 'TASK_ASSIGNED',
+                orderId: orderId
+            });
+
             await fetchOrderDetails(orderId); // Refresh
             handleInputChange(orderId, 'task_description', ''); // Clear task input
         } catch (e: any) { alert(e.message); }
     };
+
 
     const handleAddPurchase = async (orderId: string) => {
         const data = inputs[orderId];
@@ -540,6 +553,17 @@ export default function OrdersPage() {
         try {
             const { error } = await supabase.from('orders').update({ description: newDesc }).eq('id', orderId);
             if (error) throw error;
+
+            // NOTIFICATION TRIGGER (Broadcast)
+            const order = orders.find(o => o.id === orderId);
+            const clientName = order?.clients?.name || 'Un pedido';
+            await notificationService.createNotification({
+                userId: null, // Broadcast
+                title: 'Nota Actualizada',
+                message: `La nota del pedido de ${clientName} ha sido actualizada.`,
+                type: 'NOTE_UPDATED',
+                orderId: orderId
+            });
 
             await fetchData(); // Force refresh
             alert('Nota actualizada correctamente');

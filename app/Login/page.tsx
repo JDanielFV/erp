@@ -138,9 +138,14 @@ export default function QRLoginPage() {
             // Login successful
             localStorage.setItem('currentUser', session.userName);
 
-            // Important: Store the ShortCode as primary ID if available, otherwise UUID
-            const stableId = session.shortCode || session.uuid || data;
+            // Important: Store the UUID as primary ID for database operations
+            const stableId = session.uuid || data;
             localStorage.setItem('currentUserId', stableId);
+
+            // Optional: Store ShortCode separately if needed for display
+            if (session.shortCode) {
+              localStorage.setItem('userShortCode', session.shortCode);
+            }
 
             // Save timestamp visual helper
             const now = new Date();

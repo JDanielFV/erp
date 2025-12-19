@@ -16,7 +16,8 @@
     "qrcode": "^1.5.4",
     "react": "19.2.1",
     "react-dom": "19.2.1",
-    "styled-components": "^6.1.19"
+    "styled-components": "^6.1.19",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -25,6 +26,7 @@
     "@types/react-dom": "^19",
     "@types/react-qr-reader": "^2.1.7",
     "@types/styled-components": "^5.1.36",
+    "@types/web-push": "^3.6.4",
     "eslint": "^9",
     "eslint-config-next": "16.0.10",
     "tailwindcss": "^4",
