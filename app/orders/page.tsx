@@ -1,9 +1,8 @@
-
 'use client';
 
 import React, { useEffect, useState } from 'react';
 import styled from 'styled-components';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 
 // --- STYLES ---
@@ -256,13 +255,14 @@ const ModalCard = styled.div`
 
 export default function OrdersPage() {
     const router = useRouter();
+    const searchParams = useSearchParams();
     const [orders, setOrders] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [users, setUsers] = useState<any[]>([]);
     const [clients, setClients] = useState<any[]>([]);
 
     // UI State
-    const [activeModes, setActiveModes] = useState<{ [key: string]: 'none' | 'assign' | 'purchase' | 'edit' }>({});
+    const [activeModes, setActiveModes] = useState<{ [key: string]: 'none' | 'assign' | 'purchase' | 'edit' | 'view' | 'collapsed' }>({});
     const [assignments, setAssignments] = useState<{ [key: string]: any[] }>({});
     const [purchases, setPurchases] = useState<{ [key: string]: any[] }>({});
 
@@ -272,6 +272,35 @@ export default function OrdersPage() {
     // New Order Modal
     const [isNewOrderOpen, setIsNewOrderOpen] = useState(false);
     const [newOrderData, setNewOrderData] = useState({ client_id: '', description: '', deadline: '' });
+
+    // Quick Add Client State
+    const [isAddingClient, setIsAddingClient] = useState(false);
+    const [newClientName, setNewClientName] = useState('');
+
+    const handleQuickCreateClient = async () => {
+        if (!newClientName.trim()) return;
+        try {
+            const { data, error } = await supabase.from('clients').insert({ name: newClientName }).select().single();
+            if (error) throw error;
+
+            // Update local clients list
+            setClients(prev => [...prev, data]);
+            // Select the new client
+            setNewOrderData(prev => ({ ...prev, client_id: data.id }));
+            // Reset UI
+            setNewClientName('');
+            setIsAddingClient(false);
+        } catch (e: any) {
+            console.error('Error creating client:', e);
+            alert('Error al crear cliente: ' + e.message);
+        }
+    };
+
+    useEffect(() => {
+        if (searchParams.get('new') === 'true') {
+            setIsNewOrderOpen(true);
+        }
+    }, [searchParams]);
 
     useEffect(() => {
         fetchData();
@@ -393,7 +422,55 @@ export default function OrdersPage() {
         } catch (e: any) { alert(e.message); }
     };
 
+    // --- SWIPE STATE ---
+    const [swipeOffsets, setSwipeOffsets] = useState<{ [key: string]: number }>({});
+    const [touchStart, setTouchStart] = useState<{ x: number, y: number } | null>(null);
+
+    const handleTouchStart = (e: React.TouchEvent, orderId: string) => {
+        setTouchStart({ x: e.touches[0].clientX, y: e.touches[0].clientY });
+    };
+
+    const handleTouchMove = (e: React.TouchEvent, orderId: string) => {
+        if (!touchStart) return;
+        const currentX = e.touches[0].clientX;
+        const currentY = e.touches[0].clientY;
+        const diffX = currentX - touchStart.x;
+        const diffY = currentY - touchStart.y;
+
+        // Only allow horizontal swipe if strictly horizontal (avoid scrolling interference)
+        if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 10) {
+            // Only allow Right Swipe (Positive diffX)
+            if (diffX > 0) {
+                setSwipeOffsets(prev => ({ ...prev, [orderId]: diffX }));
+            }
+        }
+    };
+
+    const handleTouchEnd = async (e: React.TouchEvent, orderId: string) => {
+        const offset = swipeOffsets[orderId] || 0;
+        setSwipeOffsets(prev => ({ ...prev, [orderId]: 0 }));
+        setTouchStart(null);
+
+        // Threshold to trigger delete
+        if (offset > 150) {
+            if (confirm('¿Eliminar este pedido permanentemente?')) {
+                await handleDeleteOrder(orderId);
+            }
+        }
+    };
+
     // --- DELETE ACTIONS ---
+    const handleDeleteOrder = async (orderId: string) => {
+        try {
+            // Cascade handled by DB usually, but manual safety:
+            await supabase.from('order_assignments').delete().eq('order_id', orderId);
+            await supabase.from('order_purchases').delete().eq('order_id', orderId);
+            const { error } = await supabase.from('orders').delete().eq('id', orderId);
+            if (error) throw error;
+            fetchData();
+        } catch (e: any) { alert(e.message); }
+    };
+
     const handleDeleteAssignment = async (id: string, orderId: string) => {
         if (!confirm('¿Borrar esta tarea?')) return;
         try {
@@ -504,170 +581,194 @@ export default function OrdersPage() {
                             const mode = activeModes[order.id] || 'collapsed';
                             const date = new Date(order.created_at).toLocaleDateString('es-ES');
                             const isExpanded = mode !== 'collapsed';
+                            const offset = swipeOffsets[order.id] || 0;
 
                             return (
-                                <OrderCard
-                                    key={order.id}
-                                    onClick={() => {
-                                        if (!isExpanded) toggleMode(order.id, 'view');
-                                        // If already expanded, maybe do nothing or allow collapsing by clicking header?
-                                        // User request: "only until clicked shows them". Doesn't explicitly say click to close, but usually toggles.
-                                        // Let's allow toggle off if clicking the card background when expanded? 
-                                        // Better yet, just open if collapsed. Close via button? Or toggle on header.
-                                        // Let's make the Whole Card toggle if collapsed, but if expanded only Header toggles?
-                                        // Simpler: expanding is main action. Collapsing can be done by clicking Header or a "Close" button.
-                                        // Let's strictly follow: "clicked shows them". I will implement toggle on Header, or whole card if collapsed.
-                                    }}
-                                    style={{ cursor: isExpanded ? 'default' : 'pointer' }}
-                                >
-                                    <OrderHeader onClick={(e) => {
-                                        if (isExpanded) {
-                                            e.stopPropagation();
-                                            toggleMode(order.id, 'collapsed');
-                                        }
-                                    }} style={{ cursor: 'pointer' }}>
-                                        <ClientName>{order.clients?.name || 'Cliente desconocido'}</ClientName>
-                                        <DateText>Ingresado el {date}</DateText>
-                                    </OrderHeader>
+                                <div key={order.id} style={{ position: 'relative', overflow: 'hidden' }}>
+                                    {/* Swipe Background (Trash) */}
+                                    <div style={{
+                                        position: 'absolute',
+                                        inset: 0,
+                                        backgroundColor: '#ff4444',
+                                        borderRadius: '12px',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        paddingLeft: '1rem',
+                                        color: 'white',
+                                        fontWeight: 'bold',
+                                        opacity: offset > 0 ? Math.min(offset / 100, 1) : 0,
+                                        zIndex: 0
+                                    }}>
+                                        AL BASURERO 🗑️
+                                    </div>
 
-                                    {mode !== 'edit' && (
-                                        <OrderDescription onClick={(e) => {
+                                    <OrderCard
+                                        onTouchStart={(e) => handleTouchStart(e, order.id)}
+                                        onTouchMove={(e) => handleTouchMove(e, order.id)}
+                                        onTouchEnd={(e) => handleTouchEnd(e, order.id)}
+                                        style={{
+                                            cursor: isExpanded ? 'default' : 'pointer',
+                                            transform: `translateX(${offset}px)`,
+                                            transition: touchStart ? 'none' : 'transform 0.2s ease',
+                                            position: 'relative',
+                                            zIndex: 1,
+                                            backgroundColor: 'white' // Ensure background covers trash
+                                        }}
+                                        onClick={() => {
+                                            if (offset > 10) return; // Prevent click if swiping
+                                            if (!isExpanded) toggleMode(order.id, 'view');
+                                        }}
+                                    >
+                                        <OrderHeader onClick={(e) => {
                                             if (isExpanded) {
                                                 e.stopPropagation();
                                                 toggleMode(order.id, 'collapsed');
                                             }
-                                        }} style={{ cursor: isExpanded ? 'pointer' : 'inherit' }}>
-                                            {order.description}
-                                        </OrderDescription>
-                                    )}
+                                        }} style={{ cursor: 'pointer' }}>
+                                            <ClientName>{order.clients?.name || 'Cliente desconocido'}</ClientName>
+                                            <DateText>Ingresado el {date}</DateText>
+                                        </OrderHeader>
 
-                                    {/* VIEW MODE: Show Lists & Buttons */}
-                                    {mode === 'view' && (
-                                        <ModeContainer>
-                                            <Divider />
-                                            <SectionLabel>Tareas:</SectionLabel>
-                                            {renderAssignments(order.id, false)}
+                                        {mode !== 'edit' && (
+                                            <OrderDescription onClick={(e) => {
+                                                if (isExpanded) {
+                                                    e.stopPropagation();
+                                                    toggleMode(order.id, 'collapsed');
+                                                }
+                                            }} style={{ cursor: isExpanded ? 'pointer' : 'inherit' }}>
+                                                {order.description}
+                                            </OrderDescription>
+                                        )}
 
-                                            <div style={{ marginTop: '0.5rem' }}></div>
-                                            <SectionLabel>Compras:</SectionLabel>
-                                            {renderPurchases(order.id, false)}
+                                        {/* VIEW MODE: Show Lists & Buttons */}
+                                        {mode === 'view' && (
+                                            <ModeContainer>
+                                                <Divider />
+                                                <SectionLabel>Tareas:</SectionLabel>
+                                                {renderAssignments(order.id, false)}
 
-                                            <ButtonGroup>
-                                                <ActionButton onClick={(e) => { e.stopPropagation(); toggleMode(order.id, 'assign'); }}>Asignar tarea</ActionButton>
-                                                <SecondaryButton onClick={(e) => { e.stopPropagation(); toggleMode(order.id, 'purchase'); }}>Ingresar compra</SecondaryButton>
-                                                <SecondaryButton onClick={(e) => { e.stopPropagation(); toggleMode(order.id, 'edit', order.description); }} style={{ backgroundColor: '#777' }}>Editar</SecondaryButton>
-                                            </ButtonGroup>
-                                        </ModeContainer>
-                                    )}
+                                                <div style={{ marginTop: '0.5rem' }}></div>
+                                                <SectionLabel>Compras:</SectionLabel>
+                                                {renderPurchases(order.id, false)}
 
-                                    {mode === 'assign' && (
-                                        <ModeContainer onClick={e => e.stopPropagation()}>
-                                            <Divider />
-                                            <SectionLabel>Tareas:</SectionLabel>
-                                            {renderAssignments(order.id, false)}
+                                                <ButtonGroup>
+                                                    <ActionButton onClick={(e) => { e.stopPropagation(); toggleMode(order.id, 'assign'); }}>Asignar tarea</ActionButton>
+                                                    <SecondaryButton onClick={(e) => { e.stopPropagation(); toggleMode(order.id, 'purchase'); }}>Ingresar compra</SecondaryButton>
+                                                    <SecondaryButton onClick={(e) => { e.stopPropagation(); toggleMode(order.id, 'edit', order.description); }} style={{ backgroundColor: '#777' }}>Editar</SecondaryButton>
+                                                </ButtonGroup>
+                                            </ModeContainer>
+                                        )}
 
-                                            <InputGroup>
-                                                <InputLabel>Personal</InputLabel>
-                                                <SelectInput
-                                                    value={inputs[order.id]?.user_id || ''}
-                                                    onChange={e => handleInputChange(order.id, 'user_id', e.target.value)}
-                                                >
-                                                    <option value="">Seleccionar...</option>
-                                                    {users.map(u => (
-                                                        <option key={u.id} value={u.id}>{u.full_name}</option>
-                                                    ))}
-                                                </SelectInput>
-                                            </InputGroup>
+                                        {/* ... (Rest of modes: assign, purchase, edit - kept identical just wrapped) */}
+                                        {mode === 'assign' && (
+                                            <ModeContainer onClick={e => e.stopPropagation()}>
+                                                <Divider />
+                                                <SectionLabel>Tareas:</SectionLabel>
+                                                {renderAssignments(order.id, false)}
 
-                                            <InputGroup>
-                                                <InputLabel>Tarea</InputLabel>
-                                                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                                                    <TextInput
-                                                        placeholder="Descripción de la tarea"
-                                                        value={inputs[order.id]?.task_description || ''}
-                                                        onChange={e => handleInputChange(order.id, 'task_description', e.target.value)}
-                                                    />
-                                                </div>
-                                                <AddMoreButton onClick={() => handleAssignTask(order.id)}>
-                                                    + Añadir Tarea
-                                                </AddMoreButton>
-                                            </InputGroup>
-
-                                            <SaveChangesButton onClick={() => toggleMode(order.id, 'view')}>
-                                                Listo / Volver
-                                            </SaveChangesButton>
-                                        </ModeContainer>
-                                    )}
-
-                                    {mode === 'purchase' && (
-                                        <ModeContainer onClick={e => e.stopPropagation()}>
-                                            <Divider />
-                                            <SectionLabel>Compras:</SectionLabel>
-                                            {renderPurchases(order.id, false)}
-
-                                            <InputGroup>
-                                                <InputLabel>Añadir a lista</InputLabel>
-                                                <TextInput
-                                                    placeholder="Material (ej. Papel)"
-                                                    value={inputs[order.id]?.item_name || ''}
-                                                    onChange={e => handleInputChange(order.id, 'item_name', e.target.value)}
-                                                />
-                                            </InputGroup>
-
-                                            <InputGroup>
-                                                <InputLabel>Lugar de compra</InputLabel>
-                                                <TextInput
-                                                    placeholder="Lugar/Proveedor"
-                                                    value={inputs[order.id]?.purchase_place || ''}
-                                                    onChange={e => handleInputChange(order.id, 'purchase_place', e.target.value)}
-                                                />
-                                                <AddMoreButton onClick={() => handleAddPurchase(order.id)}>
-                                                    + Añadir más
-                                                </AddMoreButton>
-                                            </InputGroup>
-
-                                            <SaveChangesButton onClick={() => toggleMode(order.id, 'view')}>
-                                                Listo / Volver
-                                            </SaveChangesButton>
-                                        </ModeContainer>
-                                    )}
-
-                                    {mode === 'edit' && (
-                                        <ModeContainer onClick={e => e.stopPropagation()}>
-
-                                            <InputGroup>
-                                                <SectionLabel>Editar Nota:</SectionLabel>
-                                                <textarea
-                                                    style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #ddd', color: '#000', fontFamily: 'inherit' }}
-                                                    rows={3}
-                                                    value={inputs[order.id]?.description || ''}
-                                                    onChange={e => handleInputChange(order.id, 'description', e.target.value)}
-                                                />
-                                                <div style={{ textAlign: 'right', marginTop: '0.25rem' }}>
-                                                    <button
-                                                        onClick={() => handleUpdateDescription(order.id)}
-                                                        style={{ backgroundColor: '#4CAF50', color: 'white', border: 'none', borderRadius: '4px', padding: '0.25rem 0.5rem', cursor: 'pointer', fontSize: '0.8rem' }}
+                                                <InputGroup>
+                                                    <InputLabel>Personal</InputLabel>
+                                                    <SelectInput
+                                                        value={inputs[order.id]?.user_id || ''}
+                                                        onChange={e => handleInputChange(order.id, 'user_id', e.target.value)}
                                                     >
-                                                        Guardar Nota
-                                                    </button>
-                                                </div>
-                                            </InputGroup>
+                                                        <option value="">Seleccionar...</option>
+                                                        {users.map(u => (
+                                                            <option key={u.id} value={u.id}>{u.full_name}</option>
+                                                        ))}
+                                                    </SelectInput>
+                                                </InputGroup>
 
-                                            <Divider />
-                                            <SectionLabel>Editar Tareas:</SectionLabel>
-                                            {renderAssignments(order.id, true)}
+                                                <InputGroup>
+                                                    <InputLabel>Tarea</InputLabel>
+                                                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                                        <TextInput
+                                                            placeholder="Descripción de la tarea"
+                                                            value={inputs[order.id]?.task_description || ''}
+                                                            onChange={e => handleInputChange(order.id, 'task_description', e.target.value)}
+                                                        />
+                                                    </div>
+                                                    <AddMoreButton onClick={() => handleAssignTask(order.id)}>
+                                                        + Añadir Tarea
+                                                    </AddMoreButton>
+                                                </InputGroup>
 
-                                            <div style={{ marginTop: '1rem' }}></div>
-                                            <SectionLabel>Editar Compras:</SectionLabel>
-                                            {renderPurchases(order.id, true)}
+                                                <SaveChangesButton onClick={() => toggleMode(order.id, 'view')}>
+                                                    Listo / Volver
+                                                </SaveChangesButton>
+                                            </ModeContainer>
+                                        )}
 
-                                            <SaveChangesButton onClick={() => toggleMode(order.id, 'view')}>
-                                                Terminar Edición
-                                            </SaveChangesButton>
-                                        </ModeContainer>
-                                    )}
+                                        {mode === 'purchase' && (
+                                            <ModeContainer onClick={e => e.stopPropagation()}>
+                                                <Divider />
+                                                <SectionLabel>Compras:</SectionLabel>
+                                                {renderPurchases(order.id, false)}
 
-                                </OrderCard>
+                                                <InputGroup>
+                                                    <InputLabel>Añadir a lista</InputLabel>
+                                                    <TextInput
+                                                        placeholder="Material (ej. Papel)"
+                                                        value={inputs[order.id]?.item_name || ''}
+                                                        onChange={e => handleInputChange(order.id, 'item_name', e.target.value)}
+                                                    />
+                                                </InputGroup>
+
+                                                <InputGroup>
+                                                    <InputLabel>Lugar de compra</InputLabel>
+                                                    <TextInput
+                                                        placeholder="Lugar/Proveedor"
+                                                        value={inputs[order.id]?.purchase_place || ''}
+                                                        onChange={e => handleInputChange(order.id, 'purchase_place', e.target.value)}
+                                                    />
+                                                    <AddMoreButton onClick={() => handleAddPurchase(order.id)}>
+                                                        + Añadir más
+                                                    </AddMoreButton>
+                                                </InputGroup>
+
+                                                <SaveChangesButton onClick={() => toggleMode(order.id, 'view')}>
+                                                    Listo / Volver
+                                                </SaveChangesButton>
+                                            </ModeContainer>
+                                        )}
+
+                                        {mode === 'edit' && (
+                                            <ModeContainer onClick={e => e.stopPropagation()}>
+
+                                                <InputGroup>
+                                                    <SectionLabel>Editar Nota:</SectionLabel>
+                                                    <textarea
+                                                        style={{ width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #ddd', color: '#000', fontFamily: 'inherit' }}
+                                                        rows={3}
+                                                        value={inputs[order.id]?.description || ''}
+                                                        onChange={e => handleInputChange(order.id, 'description', e.target.value)}
+                                                    />
+                                                    <div style={{ textAlign: 'right', marginTop: '0.25rem' }}>
+                                                        <button
+                                                            onClick={() => handleUpdateDescription(order.id)}
+                                                            style={{ backgroundColor: '#4CAF50', color: 'white', border: 'none', borderRadius: '4px', padding: '0.25rem 0.5rem', cursor: 'pointer', fontSize: '0.8rem' }}
+                                                        >
+                                                            Guardar Nota
+                                                        </button>
+                                                    </div>
+                                                </InputGroup>
+
+                                                <Divider />
+                                                <SectionLabel>Editar Tareas:</SectionLabel>
+                                                {renderAssignments(order.id, true)}
+
+                                                <div style={{ marginTop: '1rem' }}></div>
+                                                <SectionLabel>Editar Compras:</SectionLabel>
+                                                {renderPurchases(order.id, true)}
+
+                                                <SaveChangesButton onClick={() => toggleMode(order.id, 'view')}>
+                                                    Terminar Edición
+                                                </SaveChangesButton>
+                                            </ModeContainer>
+                                        )}
+
+                                    </OrderCard>
+                                </div>
                             );
                         })
                     )}
@@ -687,15 +788,48 @@ export default function OrdersPage() {
 
                         <InputGroup>
                             <InputLabel>Cliente</InputLabel>
-                            <SelectInput
-                                value={newOrderData.client_id}
-                                onChange={e => setNewOrderData({ ...newOrderData, client_id: e.target.value })}
-                            >
-                                <option value="">Seleccionar Cliente...</option>
-                                {clients.map(c => (
-                                    <option key={c.id} value={c.id}>{c.name}</option>
-                                ))}
-                            </SelectInput>
+                            {isAddingClient ? (
+                                <div style={{ display: 'flex', color: '#000', gap: '0.5rem', flexDirection: 'column' }}>
+                                    <TextInput
+                                        placeholder="Nombre del nuevo cliente"
+                                        value={newClientName}
+                                        onChange={e => setNewClientName(e.target.value)}
+                                        autoFocus
+                                    />
+                                    <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                                        <button
+                                            onClick={() => setIsAddingClient(false)}
+                                            style={{ padding: '0.25rem 0.5rem', borderRadius: '4px', border: '1px solid #ccc', background: 'white', cursor: 'pointer', color: '#000' }}
+                                        >
+                                            Cancelar
+                                        </button>
+                                        <button
+                                            onClick={handleQuickCreateClient}
+                                            style={{ padding: '0.25rem 0.5rem', borderRadius: '4px', border: 'none', background: '#333', color: 'white', cursor: 'pointer' }}
+                                        >
+                                            Guardar Cliente
+                                        </button>
+                                    </div>
+                                </div>
+                            ) : (
+                                <SelectInput
+                                    value={newOrderData.client_id}
+                                    onChange={e => {
+                                        if (e.target.value === 'NEW_CLIENT') {
+                                            setIsAddingClient(true);
+                                            setNewClientName('');
+                                        } else {
+                                            setNewOrderData({ ...newOrderData, client_id: e.target.value });
+                                        }
+                                    }}
+                                >
+                                    <option value="">Seleccionar Cliente...</option>
+                                    <option value="NEW_CLIENT" style={{ fontWeight: 'bold' }}>+ NUEVO CLIENTE</option>
+                                    {clients.map(c => (
+                                        <option key={c.id} value={c.id}>{c.name}</option>
+                                    ))}
+                                </SelectInput>
+                            )}
                         </InputGroup>
 
                         <InputGroup>

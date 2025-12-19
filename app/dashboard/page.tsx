@@ -4,6 +4,7 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import styled, { keyframes } from 'styled-components';
+import { supabase } from '@/lib/supabase';
 import { sessionService } from '../utils/sessionService';
 
 // --- STYLES FOR MAIN DASHBOARD (Kept from approved step) ---
@@ -262,8 +263,11 @@ export default function DashboardPage() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
 
+  const [orders, setOrders] = useState<any[]>([]);
+
   // Check for session expiry on mount
   useEffect(() => {
+    // ... Session expiry logic
     const arrivalTime = localStorage.getItem('arrivalTimestamp');
     if (arrivalTime) {
       const loginTime = new Date(arrivalTime).getTime();
@@ -297,7 +301,35 @@ export default function DashboardPage() {
     };
     updateTime();
     const timer = setInterval(updateTime, 1000);
-    return () => clearInterval(timer);
+
+    // Fetch Active Orders
+    const fetchOrders = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('orders')
+          .select('*, clients(name)')
+          .order('created_at', { ascending: false }) // Newest first
+          .limit(10); // Show last 10
+
+        if (error) console.error('Error fetching dashboard orders:', error);
+        else setOrders(data || []);
+      } catch (err) {
+        console.error(err);
+      }
+    };
+    fetchOrders();
+
+    // Subscribe for changes (keep dashboard updated)
+    const channel = supabase.channel('dashboard_updates')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+        fetchOrders();
+      })
+      .subscribe();
+
+    return () => {
+      clearInterval(timer);
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const handleLogout = async () => {
@@ -310,17 +342,17 @@ export default function DashboardPage() {
   };
 
   const handleMenuClick = (id: string) => {
-    if (id === 'logout') handleLogout();
-    else if (id === 'staff') {
-      router.push('/staff');
-    }
-    else if (id === 'clients') {
-      router.push('/clients');
-    }
-    else if (id === 'orders') {
+    if (id === 'logout') {
+      handleLogout();
+    } else if (id === 'orders') {
       router.push('/orders');
-    }
-    else {
+    } else if (id === 'new') {
+      router.push('/orders?new=true');
+    } else if (id === 'clients') {
+      router.push('/clients');
+    } else if (id === 'staff') {
+      router.push('/staff');
+    } else {
       console.log('Nav:', id);
     }
   };
@@ -358,44 +390,31 @@ export default function DashboardPage() {
         <ContentArea>
           <SectionTitle>Actualizaciones</SectionTitle>
           <UpdatesList>
-            <UpdateItem>
-              <Badge>214</Badge>
-              <ItemContent>
-                <ItemTitle>Notaría 214</ItemTitle>
-                <ItemDesc>Micrositio listo</ItemDesc>
-              </ItemContent>
-            </UpdateItem>
-
-            <UpdateItem>
-              <Badge>1</Badge>
-              <ItemContent>
-                <ItemTitle>Notaría 1 Cunduacán</ItemTitle>
-                <ItemDesc>En Proceso de hot stamping</ItemDesc>
-              </ItemContent>
-            </UpdateItem>
-
-            <UpdateItem>
-              <Badge>32</Badge>
-              <ItemContent>
-                <ItemTitle>Notaría 32 Villahermosa</ItemTitle>
-                <ItemDesc>Completada</ItemDesc>
-              </ItemContent>
-            </UpdateItem>
-
-            <UpdateItem>
-              <Badge>8</Badge>
-              <ItemContent>
-                <ItemTitle>Notaría 8 Tepatitlán</ItemTitle>
-                <ItemDesc>Completada</ItemDesc>
-              </ItemContent>
-            </UpdateItem>
+            {orders.length === 0 ? (
+              <div style={{ textAlign: 'center', color: '#888', padding: '2rem' }}>
+                <p>No hay pedidos activos.</p>
+              </div>
+            ) : (
+              orders.map((order, index) => (
+                <UpdateItem key={order.id}>
+                  {/* Use index+1 as badge or maybe first letter of client? Let's use index+1 for now */}
+                  <Badge>{index + 1}</Badge>
+                  <ItemContent>
+                    <ItemTitle>{order.clients?.name || 'Cliente desconocido'}</ItemTitle>
+                    <ItemDesc>{order.description ? (order.description.length > 30 ? order.description.substring(0, 30) + '...' : order.description) : 'Sin descripción'}</ItemDesc>
+                  </ItemContent>
+                </UpdateItem>
+              ))
+            )}
           </UpdatesList>
         </ContentArea>
 
         <BottomActions>
           <ActionRow>
             <ActionButton onClick={() => router.push('/orders')}>Pedidos activos</ActionButton>
-            <ActionButton onClick={() => router.push('/orders')}>Pedido nuevo</ActionButton>
+            <ActionButton onClick={() => router.push('/orders?new=true')}>
+              Pedido nuevo
+            </ActionButton>
           </ActionRow>
           <ActionButton onClick={() => setIsMenuOpen(true)}>Menú</ActionButton>
         </BottomActions>
