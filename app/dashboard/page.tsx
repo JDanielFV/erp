@@ -408,13 +408,6 @@ export default function DashboardPage() {
 
   const handleEnableNotifications = async () => {
     if (!('Notification' in window)) return alert('Tu navegador no soporta notificaciones.');
-
-    // Explicitly re-read storedUuid from localStorage if needed, or rely on state if I had it. 
-    // Since storedUuid inside useEffect is local var, I need to get it again or use state.
-    // Dashboard unfortunately kept storedUuid as local var inside useEffect?
-    // Let's check: const [userId, setUserId] = useState... ?
-    // No, I see `if (storedUuid)` inside useEffect.
-    // I should probably use `userId` or `userName` from state/props if available, or just read localStorage again.
     const stored = localStorage.getItem('currentUserId');
 
     const permission = await Notification.requestPermission();

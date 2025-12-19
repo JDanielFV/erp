@@ -119,8 +119,7 @@ export default function QRLoginPage() {
         router.push('/dashboard');
       } else {
         console.log('New day, scan required.');
-        // Optional: clear to be safe, though dashboard did it already.
-        // localStorage.clear(); 
+        // Ensure we don't clear indiscriminately if we just logged in (though effect shouldn't run then)
       }
     }
   }, [router]);
@@ -152,12 +151,18 @@ export default function QRLoginPage() {
 
             // Save timestamp visual helper
             const now = new Date();
-            localStorage.setItem('arrivalTimestamp', now.toLocaleString());
+            localStorage.setItem('arrivalTimestamp', now.toISOString());
+
+            // alert('Login OK. Redirigiendo...'); // Debug msg
 
             setIsScanning(false);
+            // Remove timeout to reduce potential issues, just push immediately or very short delay
             setTimeout(() => {
+              console.log('Pushing to dashboard...');
               router.push('/dashboard');
-            }, 1000);
+              router.refresh(); // Force refresh to ensure middleware/layouts update
+            }, 100);
+
           } else {
             setErrorMessage("Usuario no encontrado.");
             setIsProcessing(false);
