@@ -348,10 +348,19 @@ export default function DashboardPage() {
       }
     }
 
-    // PWA Push Registration
-    if (storedUuid) {
-      pushService.registerSubscription(storedUuid);
-    }
+    // PWA Push Registration - MOVED TO MANUAL TRIGGER FOR IOS COMPATIBILITY
+    // if (storedUuid) { pushService.registerSubscription(storedUuid); }
+
+    // Check session expiry logic
+    // ... (rest kept same)
+
+
+
+    // ... inside return ...
+    // Add logic to show a small banner or button if permission is default/denied?
+    // For now, let's attach it to the BELL icon long press or just double check logic.
+    // Better: Add a menu item in the overlay "Activar Notificaciones"
+
 
     // Check session expiry logic (previously in nested useEffect)
     const arrivalTime = localStorage.getItem('arrivalTimestamp');
@@ -397,6 +406,30 @@ export default function DashboardPage() {
     };
   }, []);
 
+  const handleEnableNotifications = async () => {
+    if (!('Notification' in window)) return alert('Tu navegador no soporta notificaciones.');
+
+    // Explicitly re-read storedUuid from localStorage if needed, or rely on state if I had it. 
+    // Since storedUuid inside useEffect is local var, I need to get it again or use state.
+    // Dashboard unfortunately kept storedUuid as local var inside useEffect?
+    // Let's check: const [userId, setUserId] = useState... ?
+    // No, I see `if (storedUuid)` inside useEffect.
+    // I should probably use `userId` or `userName` from state/props if available, or just read localStorage again.
+    const stored = localStorage.getItem('currentUserId');
+
+    const permission = await Notification.requestPermission();
+    if (permission === 'granted') {
+      if (stored) {
+        await pushService.registerSubscription(stored);
+        alert('Notificaciones activadas correctamente.');
+      } else {
+        alert('Error: No se encontró ID de usuario. Recarga la página.');
+      }
+    } else {
+      alert('Permiso denegado. Habilítalo en la configuración del navegador.');
+    }
+  };
+
   const handleLogout = async () => {
     if (userId) await sessionService.registerLogout(userId);
     else await sessionService.registerLogout(userName);
@@ -417,6 +450,9 @@ export default function DashboardPage() {
       router.push('/clients');
     } else if (id === 'staff') {
       router.push('/staff');
+    } else if (id === 'notifications') {
+      handleEnableNotifications();
+      closeMenu();
     } else {
       console.log('Nav:', id);
     }
@@ -435,6 +471,7 @@ export default function DashboardPage() {
     { id: 'orders', label: 'Pedidos', icon: Icons.Orders },
     { id: 'clients', label: 'Clientes', icon: Icons.Clients },
     { id: 'staff', label: 'Personal', icon: Icons.Staff },
+    { id: 'notifications', label: 'Activar Alertas', icon: '🔔' }, // New Item
     { id: 'inventory', label: 'Inventario', icon: Icons.Inventory },
     { id: 'approvals', label: 'Vistos Bnos', icon: Icons.Check },
     { id: 'status', label: 'Estatus', icon: Icons.Status },
