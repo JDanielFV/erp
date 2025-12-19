@@ -239,6 +239,61 @@ const CircleCloseButton = styled.button`
   }
 `;
 
+// --- NOTIFICATION OVERLAY STYLES ---
+const NotificationModal = styled.div`
+  background-color: white;
+  border-radius: 16px;
+  width: 90%;
+  max-width: 400px;
+  padding: 1.5rem;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+  display: flex;
+  flex-direction: column;
+  max-height: 70vh;
+`;
+
+const NotificationHeader = styled.h3`
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #333;
+  margin: 0 0 1rem 0;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 0.5rem;
+`;
+
+const NotificationList = styled.div`
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+`;
+
+const NotificationItem = styled.div`
+  font-size: 0.9rem;
+  color: #555;
+  line-height: 1.4;
+  
+  strong {
+      color: #333;
+      font-weight: 600;
+  }
+`;
+
+const CloseBlockButton = styled.button`
+    background-color: #2b2b2b;
+    color: white;
+    width: 100%;
+    padding: 1rem;
+    border-radius: 12px;
+    border: none;
+    font-weight: 600;
+    margin-top: 1rem;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+`;
+
 // Simple Icons (white strokes)
 const Icons = {
   New: () => <span>+</span>,
@@ -264,6 +319,7 @@ export default function DashboardPage() {
 
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
 
   const [orders, setOrders] = useState<any[]>([]);
   const [notifications, setNotifications] = useState<NotificationType[]>([]);
@@ -481,12 +537,8 @@ export default function DashboardPage() {
           style={{ position: 'absolute', top: '1rem', right: '1rem', cursor: 'pointer' }}
           onClick={() => {
             if (notifications.length === 0) return alert('No tienes notificaciones.');
-            const message = notifications.map(n =>
-              `[${new Date(n.created_at).toLocaleTimeString()}] ${n.title}: ${n.message}`
-            ).join('\n\n');
-            alert('Tus Notificaciones:\n\n' + message);
 
-            // Clear badge locally for now (proper read receipt would be separate call)
+            setIsNotificationsOpen(true);
             setUnreadCount(0);
             if (userId) notificationService.markAllAsRead(userId);
           }}
@@ -549,6 +601,33 @@ export default function DashboardPage() {
           <ActionButton onClick={() => setIsMenuOpen(true)}>Menú</ActionButton>
         </BottomActions>
       </MainCard>
+
+      {/* NOTIFICATIONS MODAL */}
+      {isNotificationsOpen && (
+        <OverlayContainer $isClosing={false}>
+          <NotificationModal onClick={e => e.stopPropagation()}>
+            <NotificationHeader>Notificaciones</NotificationHeader>
+            <NotificationList>
+              {notifications.length === 0 ? (
+                <p style={{ textAlign: 'center', color: '#999', marginTop: '2rem' }}>No tienes notificaciones.</p>
+              ) : (
+                notifications.map((n, i) => {
+                  // Format: HH:MM
+                  const time = new Date(n.created_at).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+                  return (
+                    <NotificationItem key={i}>
+                      <strong>{time}</strong> - {n.message}
+                    </NotificationItem>
+                  );
+                })
+              )}
+            </NotificationList>
+            <CloseBlockButton onClick={() => setIsNotificationsOpen(false)}>
+              Cerrar
+            </CloseBlockButton>
+          </NotificationModal>
+        </OverlayContainer>
+      )}
 
       {/* MENU OVERLAY */}
       {isMenuOpen && (
