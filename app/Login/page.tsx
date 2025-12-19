@@ -107,17 +107,20 @@ export default function QRLoginPage() {
     const arrivalTime = localStorage.getItem('arrivalTimestamp');
 
     if (storedUser && storedUserId && arrivalTime) {
-      // Check 8 hour expiry
-      const loginTime = new Date(arrivalTime).getTime();
-      const now = new Date().getTime();
-      const hoursDiff = (now - loginTime) / (1000 * 60 * 60);
+      // Check Valid for TODAY (One login per day)
+      // If arrival date is same as today, auto-login.
+      // If arrival date is old, force re-scan (but dashboard may have cleared it already).
 
-      if (hoursDiff < 8) {
-        console.log('Session valid, redirecting...');
+      const arrivalDate = new Date(arrivalTime).toDateString();
+      const today = new Date().toDateString();
+
+      if (arrivalDate === today) {
+        console.log('Session valid for today, redirecting...');
         router.push('/dashboard');
       } else {
-        console.log('Session expired');
-        localStorage.clear();
+        console.log('New day, scan required.');
+        // Optional: clear to be safe, though dashboard did it already.
+        // localStorage.clear(); 
       }
     }
   }, [router]);

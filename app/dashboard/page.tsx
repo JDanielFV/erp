@@ -369,8 +369,8 @@ export default function DashboardPage() {
       const now = new Date().getTime();
       const hoursDiff = (now - loginTime) / (1000 * 60 * 60);
 
-      if (hoursDiff >= 8) {
-        console.log('Session expired on dashboard, logging out...');
+      if (hoursDiff > 24 || new Date(arrivalTime).toDateString() !== new Date().toDateString()) {
+        console.log('Session expired (Active day check), logging out...');
         localStorage.clear();
         router.push('/');
       }
